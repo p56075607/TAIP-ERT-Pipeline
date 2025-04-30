@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: 運行腳本 inversion",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_pipeline_inversion.py",
+            "args": ["--config", "configs/site.yaml"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: 運行腳本 R2MS",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_pipeline_R2MS.py",
+            "args": ["--config", "configs/site.yaml"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

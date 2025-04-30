@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# pyGIMLi Inversion anomaly files
+negResp-Atts.vector
+negResp.bms
+negResp.vtk
+resp.vec
+respRez.vec

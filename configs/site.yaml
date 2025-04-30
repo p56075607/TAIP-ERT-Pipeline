@@ -1,0 +1,52 @@
+# TAIP ERT Pipeline 設定檔
+
+# FTP 伺服器設定
+ftp:
+  host: "211.21.102.66"
+  user: "tirc"
+  password: "tirc2018"
+
+# 資料相關設定
+data:
+  root: "D:/R2MSDATA/TAIP_T1"  # 根目錄路徑
+  station_name: "TAIP"         # 站點名稱
+  line_name: "T1"             # 測線名稱
+  days_to_review: 30          # 要處理的天數
+  plot_time: [0, 4, 8, 20]    # 需要產生波形圖的時間點
+  download_all_files: True    # 是否下載所有壓縮檔（不只是 *_E.zip）
+  schedule: True              # 是否啟用排程
+  time: "09:35"              # 排程時間 (HH:MM 格式)
+  
+  # CSV2URF 相關參數
+  amplitude_estimate_start_position: 2
+  amplitude_estimate_range: 4
+
+# 反演相關設定
+inversion:
+  root_dir: "D:/R2MSDATA/TAIP_T1_test"  # 反演根目錄
+  repeat_times: 4             # 反演重複次數
+  lam: 1000                   # 正則化參數
+  z_weight: 1                 # 垂直權重
+  max_iter: 6                 # 最大迭代次數
+  limits: [1, 10000]         # 電阻率範圍限制
+  relative_error: 0.03       # 相對誤差
+  remove_channels: [20, 36, 52]  # 需要移除的通道
+  
+  # 網格相關參數
+  mesh_depth: 90             # 網格深度
+  para_dx: 0.25             # 參數化 dx
+  para_max_cell_size: 5     # 最大單元大小
+  elevation_threshold: 1195  # 高程閾值
+
+  # 資料轉換相關
+  trn_path: "D:/R2MSDATA/TAIP_T1/trn_from_221027_to_now.trn"            # TRN 檔案路徑（如果有的話）
+  ridx_mat_path: "D:/R2MSDATA/TAIP_T1/ridx_from_221028_to_221030_C_formula_07_percent.mat"  # r-index MAT 檔案路徑
+  rhoa_upper_limit: 10000   # 視電阻率上限
+  xzv_file: "D:/R2MSDATA/TAIP_T1/25040708.xzv"    # XZV 檔案路徑，用於繪製等值線圖
+
+# 輸出相關設定
+output:
+  root_dir: "D:/R2MSDATA/TAIP_T1_test"  # 輸出根目錄
+  output_dir: "D:/R2MSDATA/TAIP_T1_test/output"  # 輸出目錄
+  colormap_file: "D:/R2MSDATA/TAIP_T1/EIclm.mat"       # 自定義色彩圖檔案路徑
+  title_verbose: false    # 是否顯示詳細標題，預設為 false
