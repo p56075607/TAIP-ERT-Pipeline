@@ -22,27 +22,59 @@ def unzip_files(local_path):
     
     參數:
         local_path: 包含 ZIP 檔案的目錄路徑
+    
+    返回:
+        True: 如果所有檔案都成功解壓縮或已處理
+        False: 如果列出 ZIP 檔案時發生錯誤
     """
     try:
         # 列出目錄中的所有 ZIP 檔案
         zip_files = [f for f in os.listdir(local_path) if f.endswith('.zip')]
+        
+        # 記錄是否有任何檔案解壓縮失敗
+        any_failed = False
         
         # 解壓縮所有檔案
         for zip_file in zip_files:
             zip_path = os.path.join(local_path, zip_file)
             print(f"解壓縮 {zip_file}...")
             
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                # 解壓縮到 local_path 目錄
-                zip_ref.extractall(local_path)
+            try:
+                # 檢查檔案大小
+                if os.path.getsize(zip_path) == 0:
+                    print(f"警告: {zip_file} 檔案大小為 0KB，跳過並刪除此檔案")
+                    os.remove(zip_path)
+                    any_failed = True
+                    continue
+                
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    # 解壓縮到 local_path 目錄
+                    zip_ref.extractall(local_path)
+                
+                # 刪除 ZIP 檔案
+                os.remove(zip_path)
+                print(f"{zip_file} 解壓縮完成，已刪除 ZIP 檔案")
             
-            # 刪除 ZIP 檔案
-            os.remove(zip_path)
-            print(f"{zip_file} 解壓縮完成，已刪除 ZIP 檔案")
+            except Exception as e:
+                print(f"{zip_file} 解壓縮失敗: {str(e)}")
+                # 刪除失敗的 ZIP 檔案並繼續下一個
+                try:
+                    os.remove(zip_path)
+                    print(f"已刪除失敗的 ZIP 檔案: {zip_file}")
+                except Exception as del_err:
+                    print(f"無法刪除失敗的 ZIP 檔案 {zip_file}: {str(del_err)}")
+                
+                any_failed = True
+                # 繼續處理下一個檔案
+                continue
+        
+        if any_failed:
+            print("部分 ZIP 檔案解壓縮失敗，但已處理完所有檔案")
         
         return True
+        
     except Exception as e:
-        print(f"解壓縮失敗: {str(e)}")
+        print(f"列出 ZIP 檔案失敗: {str(e)}")
         return False
 
 def csv2urf(csv_files, one_intelligent_ERT_survey_geo_file, output_urf_path, output_urf_file_name, output_png_path, plot_wave, png_file_first_name, amplitude_estimate_start_position, amplitude_estimate_range, contain_common_N=True):

@@ -15,7 +15,7 @@ data:
   plot_time: [0, 4, 8, 20]    # 需要產生波形圖的時間點
   download_all_files: True    # 是否下載所有壓縮檔（不只是 *_E.zip）
   schedule: True              # 是否啟用排程
-  time: "09:35"              # 排程時間 (HH:MM 格式)
+  time: "20:08"              # 排程時間 (HH:MM 格式)
   
   # CSV2URF 相關參數
   amplitude_estimate_start_position: 2
