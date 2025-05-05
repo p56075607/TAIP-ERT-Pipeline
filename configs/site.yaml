@@ -11,11 +11,11 @@ data:
   root: "C:/R2MSDATA/TAIP_T1"  # 根目錄路徑
   station_name: "TAIP"         # 站點名稱
   line_name: "T1"             # 測線名稱
-  days_to_review: 30          # 要處理的天數
+  days_to_review: 5          # 要處理的天數
   plot_time: [0, 4, 8, 20]    # 需要產生波形圖的時間點
   download_all_files: True    # 是否下載所有壓縮檔（不只是 *_E.zip）
   schedule: True              # 是否啟用排程
-  time: "20:08"              # 排程時間 (HH:MM 格式)
+  time: "09:00"              # 排程時間 (HH:MM 格式)
   
   # CSV2URF 相關參數
   amplitude_estimate_start_position: 2
