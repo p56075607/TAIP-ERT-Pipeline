@@ -85,87 +85,148 @@ class ERTInverter:
     def invert_single_file(self, urf_file):
         """對單個 URF 檔案進行反演"""
         try:
-            # 1. 轉換 URF 為 ohm 格式
-            trn_path = self.config.get("trn_path", None)
-            ohm_path = utils.convertURF(urf_file, has_trn=trn_path is not None, trn_path=trn_path)
+            # 從 URF 檔案名稱中提取時間資訊
+            file_basename = os.path.basename(urf_file).split('.')[0]
             
-            # 2. 載入資料
-            data = pg.load(ohm_path)
-            self.logger.info(f"載入資料: {ohm_path}")
+            # 檢查是否有部分完成的反演
+            output_base_dir = os.path.join(self.root_dir, 'output', file_basename)
+            last_completed_repeat = 0
+            existing_data = None
+            existing_mesh = None
             
-            # 3. 去除 r-index (如果有提供)
-            ridx_mat_path = self.config.get("ridx_mat_path", None)
-            if ridx_mat_path and os.path.exists(ridx_mat_path):
-                self.logger.info(f"使用 r-index 矩陣: {ridx_mat_path}")
-                mat = scipy.io.loadmat(ridx_mat_path)
-                ridx = np.array(mat['ridx']).T[0]
-                ridx = ridx.astype(bool)
-                self.logger.info(f"去除 r-index: {len(ridx[ridx == True])} 個點")
-                data.remove(ridx)
+            # 檢查已經完成了哪些 repeat 次數
+            if os.path.exists(output_base_dir):
+                # 檢查已存在的 repeat 目錄
+                completed_repeats = []
+                for i in range(1, self.repeat_times + 1):
+                    repeat_dir = os.path.join(output_base_dir, f"repeat_{i}")
+                    ohm_file = os.path.join(repeat_dir, "ERTManager", f"{file_basename}_inv.ohm")
+                    
+                    if os.path.exists(ohm_file):
+                        completed_repeats.append(i)
+                
+                if completed_repeats:
+                    last_completed_repeat = max(completed_repeats)
+                    self.logger.info(f"發現已完成的反演次數: {completed_repeats}，最後完成的是 repeat_{last_completed_repeat}")
+                    
+                    # 如果所有反演都已完成，可以直接返回
+                    if last_completed_repeat >= self.repeat_times:
+                        self.logger.info(f"所有 {self.repeat_times} 次反演已完成，無需再次反演")
+                        return {"file": urf_file, "status": "already_completed"}
+                    
+                    # 載入最後一次反演的資料
+                    last_ohm_file = os.path.join(output_base_dir, f"repeat_{last_completed_repeat}", 
+                                               "ERTManager", f"{file_basename}_inv.ohm")
+                    
+                    try:
+                        self.logger.info(f"嘗試載入已完成的反演資料: {last_ohm_file}")
+                        existing_data = pg.load(last_ohm_file)
+                        self.logger.info(f"載入之前的反演資料成功: {len(existing_data['rhoa'])} 個資料點")
+                    except Exception as e:
+                        self.logger.warning(f"載入之前的反演資料失敗: {str(e)}，將重新開始反演")
+                        last_completed_repeat = 0
             
-            # 4. 去除問題通道
-            for ch in self.remove_channels:
-                t2 = data['a'] == ch
+            # 如果沒有找到已完成的反演，從頭開始處理
+            if last_completed_repeat == 0:
+                # 1. 轉換 URF 為 ohm 格式
+                trn_path = self.config.get("trn_path", None)
+                ohm_path = utils.convertURF(urf_file, has_trn=trn_path is not None, trn_path=trn_path)
+                
+                # 2. 載入資料
+                data = pg.load(ohm_path)
+                self.logger.info(f"載入資料: {ohm_path}")
+                
+                # 3. 去除 r-index (如果有提供)
+                ridx_mat_path = self.config.get("ridx_mat_path", None)
+                if ridx_mat_path and os.path.exists(ridx_mat_path):
+                    self.logger.info(f"使用 r-index 矩陣: {ridx_mat_path}")
+                    mat = scipy.io.loadmat(ridx_mat_path)
+                    ridx = np.array(mat['ridx']).T[0]
+                    ridx = ridx.astype(bool)
+                    self.logger.info(f"去除 r-index: {len(ridx[ridx == True])} 個點")
+                    data.remove(ridx)
+                
+                # 4. 去除問題通道
+                for ch in self.remove_channels:
+                    t2 = data['a'] == ch
+                    index = [i for i, x in enumerate(t2) if x]
+                    self.logger.info(r'remove a == ch{:d} {:d}'.format(ch,len(index)))
+                    data.remove(data['a'] == ch)
+
+                    t2 = data['b'] == ch
+                    index = [i for i, x in enumerate(t2) if x]
+                    self.logger.info(r'remove b == ch{:d} {:d}'.format(ch,len(index)))
+                    data.remove(data['b'] == ch)
+
+                    t2 = data['m'] == ch
+                    index = [i for i, x in enumerate(t2) if x]
+                    self.logger.info(r'remove m == ch{:d} {:d}'.format(ch,len(index)))
+                    data.remove(data['m'] == ch)
+
+                    t2 = data['n'] == ch
+                    index = [i for i, x in enumerate(t2) if x]
+                    self.logger.info(r'remove n == ch{:d} {:d}'.format(ch,len(index)))
+                    data.remove(data['n'] == ch)
+                
+                # 5. 計算幾何因子與視電阻率
+                data['k'] = ert.createGeometricFactors(data, numerical=True)
+                data['rhoa'] = data['k'] * data['r']
+                
+                # 6. 過濾異常值
+                # 移除負值
+                t2 = data['rhoa'] < 0
                 index = [i for i, x in enumerate(t2) if x]
-                self.logger.info(r'remove a == ch{:d} {:d}'.format(ch,len(index)))
-                data.remove(data['a'] == ch)
-
-                t2 = data['b'] == ch
+                self.logger.info(r'remove negative rho_a: {:d}'.format(len(index)))
+                data.remove(t2)
+                
+                # 移除過大值
+                t2 = data['rhoa'] > 10000
                 index = [i for i, x in enumerate(t2) if x]
-                self.logger.info(r'remove b == ch{:d} {:d}'.format(ch,len(index)))
-                data.remove(data['b'] == ch)
+                self.logger.info(r'remove rho_a > 10000: {:d}'.format(len(index)))
+                data.remove(index)
 
-                t2 = data['m'] == ch
-                index = [i for i, x in enumerate(t2) if x]
-                self.logger.info(r'remove m == ch{:d} {:d}'.format(ch,len(index)))
-                data.remove(data['m'] == ch)
+                # # Skip data by a skip step
+                # skip_step = 10
+                # remove_index = np.array([x for x in np.arange(len(data['rhoa']))])
+                # remove_index = remove_index % skip_step != 0
+                # self.logger.info(f'skip data by step: {skip_step}')
+                # data.remove(remove_index)
+                
+                # 7. 設置誤差估計
+                data['err'] = ert.estimateError(data, relativeError=self.relative_error)
+                self.logger.info(f"資料處理完成，剩餘資料點數: {len(data['rhoa'])}")
 
-                t2 = data['n'] == ch
-                index = [i for i, x in enumerate(t2) if x]
-                self.logger.info(r'remove n == ch{:d} {:d}'.format(ch,len(index)))
-                data.remove(data['n'] == ch)
-            
-            # 5. 計算幾何因子與視電阻率
-            data['k'] = ert.createGeometricFactors(data, numerical=True)
-            data['rhoa'] = data['k'] * data['r']
-            
-            # 6. 過濾異常值
-            # 移除負值
-            t2 = data['rhoa'] < 0
-            index = [i for i, x in enumerate(t2) if x]
-            self.logger.info(r'remove negative rho_a: {:d}'.format(len(index)))
-            data.remove(t2)
-            
-            # 移除過大值
-            t2 = data['rhoa'] > 10000
-            index = [i for i, x in enumerate(t2) if x]
-            self.logger.info(r'remove rho_a > 10000: {:d}'.format(len(index)))
-            data.remove(index)
-
-            # # Skip data by a skip step
-            # skip_step = 10
-            # remove_index = np.array([x for x in np.arange(len(data['rhoa']))])
-            # remove_index = remove_index % skip_step != 0
-            # self.logger.info(f'skip data by step: {skip_step}')
-            # data.remove(remove_index)
-            
-            # 7. 設置誤差估計
-            data['err'] = ert.estimateError(data, relativeError=self.relative_error)
-            self.logger.info(f"資料處理完成，剩餘資料點數: {len(data['rhoa'])}")
-
-            # 8. 創建網格
-            mesh = self._create_mesh(data)
-            self.logger.info(f"網格創建完成，單元數: {len([i for i, x in enumerate(mesh.cellMarker() == 2) if x])}")
+                # 8. 創建網格
+                mesh = self._create_mesh(data)
+                self.logger.info(f"網格創建完成，單元數: {len([i for i, x in enumerate(mesh.cellMarker() == 2) if x])}")
+            else:
+                # 使用之前的資料
+                data = existing_data
+                
+                # 嘗試載入先前的網格檔案
+                previous_mesh_file = os.path.join(output_base_dir, f"repeat_{last_completed_repeat}", "ERTManager", "mesh.bms")
+                if os.path.exists(previous_mesh_file):
+                    try:
+                        mesh = pg.load(previous_mesh_file)
+                        self.logger.info(f"載入之前的網格檔案: {previous_mesh_file}")
+                    except Exception as e:
+                        self.logger.warning(f"載入之前的網格檔案失敗: {str(e)}，將重新創建網格")
+                        mesh = self._create_mesh(data)
+                else:
+                    self.logger.info(f"未找到之前的網格檔案: {previous_mesh_file}，將重新創建網格")
+                    mesh = self._create_mesh(data)
+                
+                self.logger.info(f"網格單元數: {len([i for i, x in enumerate(mesh.cellMarker() == 2) if x])}")
             
             # 9. 開始反演
             mgr = ert.ERTManager(data)
             
-            file_basename = os.path.basename(urf_file).split('.')[0]
             result_data = {"file": urf_file, "manager": mgr, "iterations": []}
             
-            # 多次迭代反演
-            for i in range(self.repeat_times):
-                self.logger.info(f"開始第 {i+1}/{self.repeat_times} 次反演")
+            # 多次迭代反演，從最後完成的下一次開始
+            for i in range(last_completed_repeat, self.repeat_times):
+                current_repeat = i + 1
+                self.logger.info(f"開始第 {current_repeat}/{self.repeat_times} 次反演")
                 self.logger.info(f"{mesh} paraDomain cell#: {len([i for i, x in enumerate(mesh.cellMarker() == 2) if x])}")
                 self.logger.info(f"{data} invert data#: {len(data['rhoa'])}")
                 
@@ -182,7 +243,7 @@ class ERTInverter:
                 self.logger.info(f"反演結果: rrms={rrms:.2f}%, chi²={chi2:.3f}")
                 
                 # 保存本次反演結果
-                save_path = os.path.join(self.root_dir, 'output', file_basename, f'repeat_{i+1}')
+                save_path = os.path.join(self.root_dir, 'output', file_basename, f'repeat_{current_repeat}')
                 if not os.path.exists(save_path):
                     os.makedirs(save_path)
 
@@ -210,7 +271,7 @@ class ERTInverter:
                 file_name = os.path.basename(urf_file)
                 
                 # 立即進行視覺化處理，允許用戶查看每次反演的結果
-                self.logger.info(f"正在為第 {i+1}/{self.repeat_times} 次反演生成視覺化結果")
+                self.logger.info(f"正在為第 {current_repeat}/{self.repeat_times} 次反演生成視覺化結果")
                 self.visualizer.load_inversion_results(save_path)
                 # 標記這是即時視覺化，避免與最終處理重複
                 # 傳遞 xzv_file 參數，使其能執行 plot_inverted_contour_xzv 方法
@@ -224,20 +285,20 @@ class ERTInverter:
                 else:
                     self.logger.info("未使用 XZV 文件，使用默認可視化方法")
                     self.visualizer.plot_all(save_path, file_name, **plot_kwargs)
-                self.logger.info(f"第 {i+1}/{self.repeat_times} 次反演的視覺化結果已生成")
+                self.logger.info(f"第 {current_repeat}/{self.repeat_times} 次反演的視覺化結果已生成")
                 
                 # 保存迭代資訊
                 result_data["iterations"].append({
-                    "repeat": i+1,
+                    "repeat": current_repeat,
                     "rrms": rrms,
                     "chi2": chi2,
                     "save_path": save_path,
-                    "is_last": (i == self.repeat_times - 1),  # 標記是否是最後一次反演
+                    "is_last": (current_repeat == self.repeat_times),  # 標記是否是最後一次反演
                     "visualized": True  # 標記此迭代已經進行過視覺化
                 })
                 
                 # 如果不是最後一次反演，移除擬合不佳的資料
-                if i != self.repeat_times - 1:
+                if current_repeat != self.repeat_times:
                     remain_per = 0.9  # 保留90%的資料
                     # 計算實際值和模型預測值之間的相對誤差，作為誤差指標
                     # 由於沒有 'misfit' 欄位，我們使用模型回應與實際測量值的相對差異

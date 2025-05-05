@@ -17,6 +17,7 @@ import sys
 import argparse
 import yaml
 import glob
+import re
 from pathlib import Path
 
 # 添加 src 目錄到路徑
@@ -34,6 +35,20 @@ def parse_args():
     parser.add_argument("--output", "-o", help="輸出目錄，會覆蓋設定檔中的值")
     
     return parser.parse_args()
+
+def extract_datetime(urf_file):
+    """從 URF 檔案名稱中提取日期時間資訊作為排序依據
+    
+    假設檔案名稱格式為 "YYMMDDHH_其他資訊.urf"，提取 YYMMDDHH 部分作為排序依據
+    """
+    basename = os.path.basename(urf_file).split('.')[0]
+    # 假設時間格式在檔名的開頭部分，使用 split 提取首個部分
+    time_part = basename.split('_')[0]
+    
+    # 確認提取的部分是否符合 YYMMDDHH 格式
+    if re.match(r'^[0-9]{8}$', time_part):
+        return time_part
+    return basename  # 若格式不符，則返回完整檔名作為備用排序依據
 
 def main():
     """主程式"""
@@ -91,6 +106,11 @@ def main():
         else:
             print(f"錯誤：測試目錄不存在: {test_dir}")
             return 1
+    
+    # 根據檔案名稱中的日期時間資訊進行排序（由舊到新）
+    if len(urf_files) > 1:
+        urf_files.sort(key=extract_datetime)
+        print("已根據檔案名稱中的日期時間資訊排序 URF 檔案（由舊到新）")
     
     # 執行反演
     if urf_files:
