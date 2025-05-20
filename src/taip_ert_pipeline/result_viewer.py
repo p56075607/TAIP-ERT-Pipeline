@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, 
                              QVBoxLayout, QLabel, QTextEdit, QScrollArea, QSplitter,
                              QGridLayout, QFrame)
@@ -240,30 +241,66 @@ class ResultViewer(QMainWindow):
         # 1. 如果有已識別的反演時間點和反演次數，優先從那裡加載
         if self.latest_repeat_folder:
             repeat_path = os.path.join(self.result_dir, self.latest_repeat_folder)
-            image_count = 0
+            print(f"正在從 {repeat_path} 載入圖片...")
             
-            for img_file in image_files:
-                file_path = os.path.join(repeat_path, img_file)
-                if os.path.exists(file_path):
-                    image_paths[img_file] = file_path
-                    image_count += 1
-                    found_images = True
-            
-            if image_count > 0:
-                print(f"從 {self.latest_repeat_folder} 中載入了 {image_count} 張圖片")
+            # 檢查目錄是否存在
+            if not os.path.exists(repeat_path):
+                print(f"警告：路徑不存在 {repeat_path}")
+            else:
+                image_count = 0
+                
+                # 列出目錄中的所有檔案，檢查是否有圖片文件
+                existing_files = os.listdir(repeat_path)
+                png_files = [f for f in existing_files if f.endswith('.png')]
+                if png_files:
+                    print(f"在 {repeat_path} 中找到以下圖片文件: {', '.join(png_files)}")
+                
+                for img_file in image_files:
+                    file_path = os.path.join(repeat_path, img_file)
+                    if os.path.exists(file_path):
+                        image_paths[img_file] = file_path
+                        image_count += 1
+                        found_images = True
+                        print(f"找到圖片: {file_path}")
+                    else:
+                        print(f"找不到圖片: {file_path}")
+                
+                if image_count > 0:
+                    print(f"從 {self.latest_repeat_folder} 中載入了 {image_count} 張圖片")
+                else:
+                    print(f"在 {self.latest_repeat_folder} 中未找到任何圖片文件")
         
         # 2. 從output_dir中加載圖片（如果從反演資料夾中未找到或找到不完整）
         if not found_images or len(image_paths) < len(image_files):
+            print(f"從輸出目錄 {self.output_dir} 尋找未找到的圖片...")
+            
+            # 列出輸出目錄中的所有文件
+            if os.path.exists(self.output_dir):
+                output_files = os.listdir(self.output_dir)
+                png_files = [f for f in output_files if f.endswith('.png')]
+                if png_files:
+                    print(f"在輸出目錄中找到以下圖片文件: {', '.join(png_files)}")
+            
             for img_file in image_files:
                 if img_file not in image_paths:  # 只加載還未找到的圖片
                     file_path = os.path.join(self.output_dir, img_file)
                     if os.path.exists(file_path):
                         image_paths[img_file] = file_path
                         print(f"從輸出目錄載入圖片: {file_path}")
+                    else:
+                        print(f"在輸出目錄中也找不到圖片: {file_path}")
         
         # 計算最佳網格佈局
         total_images = len(image_paths)
         if total_images == 0:
+            print("警告: 未找到任何可顯示的圖片")
+            
+            # 添加一個錯誤提示標籤
+            error_label = QLabel("未找到任何可顯示的圖片，請檢查反演是否已完成。")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setFont(QFont("Arial", 12, QFont.Bold))
+            error_label.setStyleSheet("color: red;")
+            self.grid_layout.addWidget(error_label, 0, 0)
             return
             
         # 計算最佳的網格佈局行列數
@@ -290,10 +327,31 @@ class ResultViewer(QMainWindow):
             
             # 創建圖片標籤
             img_label = QLabel()
-            pixmap = QPixmap(file_path)
-            if pixmap.width() > 500:  # 縮放過大的圖片
-                pixmap = pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            img_label.setPixmap(pixmap)
+            
+            # 嘗試載入圖片，強制重新讀取文件（避免緩存問題）
+            try:
+                # 檢查文件是否已更改
+                file_modified_time = os.path.getmtime(file_path)
+                
+                # 載入圖片
+                pixmap = QPixmap(file_path)
+                
+                # 檢查pixmap是否為空
+                if pixmap.isNull():
+                    print(f"警告: 載入圖片 {file_path} 失敗，圖片可能損壞")
+                    # 創建一個顯示錯誤的pixmap
+                    pixmap = QPixmap(500, 300)
+                    pixmap.fill(Qt.white)
+                else:
+                    print(f"成功載入圖片: {file_path}")
+                    if pixmap.width() > 500:  # 縮放過大的圖片
+                        pixmap = pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                
+                img_label.setPixmap(pixmap)
+            except Exception as e:
+                print(f"載入圖片 {file_path} 時出錯: {str(e)}")
+                img_label.setText(f"無法載入圖片: {str(e)}")
+            
             img_label.setAlignment(Qt.AlignCenter)
             
             # 添加到框架佈局
@@ -330,6 +388,7 @@ class ResultViewer(QMainWindow):
         
         # 檢查當前的反演結果是否仍然有效
         if self.info_file and not os.path.exists(self.info_file):
+            print(f"資訊檔案不存在，需要更新: {self.info_file}")
             need_update = True
             
         # 檢查是否有新的反演時間點資料夾
@@ -339,6 +398,7 @@ class ResultViewer(QMainWindow):
             
             # 檢查這個時間點是否有更新
             if self._check_time_folder_has_updated(time_folder_path):
+                print(f"偵測到時間點資料夾有更新: {time_folder_path}")
                 need_update = True
                 
             # 如果需要更新，或者我們還沒有找到最新的反演結果
@@ -350,19 +410,38 @@ class ResultViewer(QMainWindow):
                     
                     # 如果找到了新的反演結果
                     if self.latest_repeat_folder != new_repeat_folder:
+                        print(f"找到新的反演結果資料夾: {new_repeat_folder}")
                         self.latest_repeat_folder = new_repeat_folder
                         new_info_path = os.path.join(self.result_dir, new_repeat_folder, "ERTManager/inv_info.txt")
                         
                         if os.path.exists(new_info_path):
                             self.info_file = new_info_path
-                            print(f"發現新的反演結果: {self.latest_repeat_folder}")
+                            print(f"發現新的反演結果資訊檔: {self.info_file}")
+                            need_update = True
+                        else:
+                            print(f"找不到新的反演結果資訊檔: {new_info_path}")
+            
+            # 如果有最新的反演結果資料夾，檢查是否有新的圖片文件
+            if self.latest_repeat_folder:
+                repeat_path = os.path.join(self.result_dir, self.latest_repeat_folder)
+                if os.path.exists(repeat_path):
+                    # 檢查是否有新的圖片文件
+                    png_files = [f for f in os.listdir(repeat_path) if f.endswith('.png')]
+                    if png_files:
+                        # 檢查圖片文件的最後修改時間
+                        last_modified = max([os.path.getmtime(os.path.join(repeat_path, f)) for f in png_files])
+                        if last_modified > self.last_check_time:
+                            print(f"偵測到新的圖片文件或圖片文件更新: {repeat_path}")
                             need_update = True
         
         # 如果需要更新，則重新載入圖片和資訊
         if need_update:
+            print("開始重新載入圖片和資訊...")
             self.load_result_images()
             self.load_inv_info()
             self.update_path_label()  # 更新路徑標籤
+            # 更新最後檢查時間
+            self.last_check_time = time.time()
             return True
             
         return False

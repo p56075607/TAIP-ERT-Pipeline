@@ -185,12 +185,12 @@ class ERTInverter:
                 self.logger.info(r'remove rho_a > 10000: {:d}'.format(len(index)))
                 data.remove(index)
 
-                # # Skip data by a skip step
-                # skip_step = 10
-                # remove_index = np.array([x for x in np.arange(len(data['rhoa']))])
-                # remove_index = remove_index % skip_step != 0
-                # self.logger.info(f'skip data by step: {skip_step}')
-                # data.remove(remove_index)
+                # Skip data by a skip step
+                skip_step = 10
+                remove_index = np.array([x for x in np.arange(len(data['rhoa']))])
+                remove_index = remove_index % skip_step != 0
+                self.logger.info(f'skip data by step: {skip_step}')
+                data.remove(remove_index)
                 
                 # 7. 設置誤差估計
                 data['err'] = ert.estimateError(data, relativeError=self.relative_error)

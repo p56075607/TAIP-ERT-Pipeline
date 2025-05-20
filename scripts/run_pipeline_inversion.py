@@ -463,13 +463,24 @@ def run_inversion_single(config, urf_file):
         int: 0表示成功，非0表示失敗
     """
     try:
+        # 反演開始前，先通知查看器預加載當前最新的反演結果
+        basename = os.path.basename(urf_file)
+        output_dir = config["output"].get("output_dir", "output")
+        
+        # 預加載通知 - 強制刷新最新圖片
+        notify_viewer(f"準備開始反演，請更新圖片: {basename}")
+        
+        # 等待一些時間，確保查看器有時間刷新
+        time.sleep(1)
+        
+        print(f"開始執行反演: {basename}")
+        
         # 執行 pipeline 中的反演功能
         if pipeline.run_inversion_only(config, [urf_file]):
-            basename = os.path.basename(urf_file)
             print(f"反演成功完成: {basename}")
             
-            # 通知結果查看器更新
-            notify_viewer(f"反演完成: {basename}")
+            # 通知結果查看器更新，並提供足夠時間加載圖片
+            notify_viewer(f"反演完成，請完整更新: {basename}")
             
             return 0
         else:
@@ -532,6 +543,11 @@ def run_intersection_inversion_single(config, current_folder, previous_folders):
     
     print(f"\n----- 開始交集反演處理: {current_folder} -----")
     print(f"時間點: {time_part}, 輸出目錄: {output_dir}")
+    
+    # 交集反演開始前，先通知查看器更新當前最新圖片
+    notify_viewer(f"準備開始交集反演，請更新圖片: {current_folder}")
+    # 等待一些時間，確保查看器有時間刷新
+    time.sleep(1)
     
     # 檢查並創建交集反演結果目錄
     xzv_inters_dir = os.path.join(output_dir, "xzv_inters")
@@ -1346,22 +1362,39 @@ def start_viewer_process(output_dir, refresh_interval):
                 update_msg = update_queue.get_nowait()
                 print(f"結果查看器收到更新通知: {update_msg}")
                 
-                # 檢查是否包含特定路徑信息
+                # 根據不同的消息類型進行不同的處理
                 if "最新結果:" in update_msg:
+                    # 處理指定結果路徑的消息
                     try:
                         # 從消息中提取路徑信息
                         result_path = update_msg.split("最新結果:")[1].strip()
                         if result_path and os.path.exists(os.path.join(output_dir, result_path)):
-                            print(f"嘗試顯示最新結果: {result_path}")
+                            print(f"切換到指定結果目錄: {result_path}")
                             # 直接設置查看器的最新反演結果資料夾
                             viewer.latest_repeat_folder = result_path
                             # 強制更新路徑標籤
                             viewer.update_path_label()
+                            # 重新加載圖片和資訊
+                            viewer.load_result_images()
+                            viewer.load_inv_info()
                     except Exception as e:
                         print(f"解析結果路徑時出錯: {str(e)}")
                 
-                # 強制刷新查看器
-                viewer.force_refresh()
+                elif "準備開始反演" in update_msg:
+                    # 反演開始前的預加載處理
+                    print("反演準備開始，強制刷新當前圖片")
+                    # 先執行一次 find_latest_result 確保顯示最新狀態
+                    find_latest_result(True)
+                
+                elif "請完整更新" in update_msg:
+                    # 反演完成後的更新
+                    print("反演已完成，執行完整更新")
+                    # 強制重新檢查最新結果，並清空圖片緩存
+                    find_latest_result(True)
+                
+                else:
+                    # 一般更新通知，執行標準刷新
+                    viewer.force_refresh()
         except Exception as e:
             print(f"檢查更新時出錯: {str(e)}")
     
@@ -1371,8 +1404,13 @@ def start_viewer_process(output_dir, refresh_interval):
     update_timer.start(1000)  # 每秒檢查一次
     
     # 初始檢查該輸出目錄下的最新結果
-    def find_latest_result():
-        """尋找輸出目錄中最新的反演結果"""
+    def find_latest_result(force_reload=False):
+        """
+        尋找輸出目錄中最新的反演結果
+        
+        參數:
+            force_reload: 是否強制重新載入圖片，忽略緩存
+        """
         try:
             # 1. 列出並排序所有時段資料夾
             sorted_folders = list_sorted_output_folders(output_dir)
@@ -1401,18 +1439,33 @@ def start_viewer_process(output_dir, refresh_interval):
                     return
             
             # 5. 設置查看器顯示該結果
-            viewer.latest_repeat_folder = latest_result
-            viewer.update_path_label()
-            viewer.force_refresh()
-            print(f"已設置查看器顯示最新結果: {latest_result}")
+            need_reload = force_reload or viewer.latest_repeat_folder != latest_result
             
+            if need_reload:
+                print(f"需要重新載入結果: {latest_result}")
+                viewer.latest_repeat_folder = latest_result
+                
+                # 如果強制重載或路徑變更，執行完整加載
+                # 清除現有圖像緩存
+                viewer._clear_layout(viewer.grid_layout)
+                
+                # 完整重載所有內容
+                viewer.load_result_images()
+                viewer.load_inv_info()
+                viewer.update_path_label()
+                print(f"已設置查看器顯示最新結果並重新載入所有圖片: {latest_result}")
+            else:
+                print(f"已經顯示最新結果: {latest_result}")
+                # 僅刷新顯示，不重新加載圖片
+                viewer.force_refresh()
+                
         except Exception as e:
             print(f"尋找最新結果時出錯: {str(e)}")
     
     # 啟動一個延遲定時器，在界面加載後尋找最新結果
     initial_timer = QTimer()
     initial_timer.setSingleShot(True)
-    initial_timer.timeout.connect(find_latest_result)
+    initial_timer.timeout.connect(lambda: find_latest_result(True))
     initial_timer.start(2000)  # 2秒後執行一次
     
     sys.exit(app.exec_())
