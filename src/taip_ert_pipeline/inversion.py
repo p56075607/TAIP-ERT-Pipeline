@@ -203,6 +203,44 @@ class ERTInverter:
                 # 使用之前的資料
                 data = existing_data
                 
+                self.logger.info("基於上次反演結果，載入資料後立即篩選擬合不佳的資料")
+                
+                # 載入模型響應資料
+                previous_response_file = os.path.join(
+                    output_base_dir, 
+                    f"repeat_{last_completed_repeat}", 
+                    "ERTManager", 
+                    "model_response.txt"
+                )
+                
+                if os.path.exists(previous_response_file):
+                    try:
+                        # 讀取模型響應資料
+                        predicted_data = np.loadtxt(previous_response_file)
+                        actual_data = data['rhoa']
+                        
+                        if len(predicted_data) == len(actual_data):
+                            remain_per = 0.9  # 保留90%的資料
+                            # 計算實際值和模型預測值之間的相對誤差
+                            rel_error = np.abs((actual_data - predicted_data) / actual_data) * 100  # 相對誤差百分比
+                            
+                            t1 = np.argsort(rel_error)[int(np.round(remain_per * len(data['rhoa']), 0)):]
+                            remove_index = np.full((len(data['rhoa'])), False)
+                            for j in range(len(t1)):
+                                remove_index[t1[j]] = True
+                            
+                            original_len = len(data['rhoa'])
+                            self.logger.info(f"移除 {int(100*(1-remain_per))}% 最差的擬合資料，原始資料量: {original_len}")
+                            self.logger.info(f"移除 {len(t1)} 個不良擬合點，誤差閾值 {rel_error[t1[0]]:.2f}%")
+                            data.remove(remove_index)
+                            self.logger.info(f"篩選後資料量: {len(data['rhoa'])}")
+                        else:
+                            self.logger.warning(f"模型響應資料長度 ({len(predicted_data)}) 與實際資料長度 ({len(actual_data)}) 不匹配，無法篩選資料")
+                    except Exception as e:
+                        self.logger.warning(f"讀取或處理模型響應數據時出錯: {str(e)}，將使用原始資料進行反演")
+                else:
+                    self.logger.warning(f"未找到先前的模型響應文件: {previous_response_file}，將使用原始資料進行反演")
+                
                 # 嘗試載入先前的網格檔案
                 previous_mesh_file = os.path.join(output_base_dir, f"repeat_{last_completed_repeat}", "ERTManager", "mesh.bms")
                 if os.path.exists(previous_mesh_file):
