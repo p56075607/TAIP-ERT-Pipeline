@@ -19,23 +19,28 @@ TAIP ERT Pipeline - ERT 反演與視覺化腳本
 
 import os
 import sys
+from pathlib import Path
+
+# 添加 src 目錄到路徑 - 移到最前面確保所有模組都能正確導入
+sys.path.append(str(Path(__file__).parent.parent))
+
 import argparse
 import yaml
 import glob
 import re
-from pathlib import Path
 import numpy as np
 import pygimli as pg
 import pygimli.physics.ert as ert
 import matplotlib.pyplot as plt
 from datetime import datetime
 import shutil
+import multiprocessing
+import platform
 
-# 添加 src 目錄到路徑
-sys.path.append(str(Path(__file__).parent.parent))
-
+# 現在導入自定義模組
 from src.taip_ert_pipeline import pipeline
 from src.taip_ert_pipeline import visualization
+from src.taip_ert_pipeline import result_viewer
 
 def parse_args():
     """解析命令列參數"""
@@ -56,6 +61,15 @@ def parse_args():
     
     parser.add_argument("--skip-inversion", "-s", action="store_true", help="跳過常規反演，只執行交集反演")
     
+    # 添加與結果查看器相關的參數
+    parser.add_argument("--viewer", action="store_true", 
+                        help="啟用結果查看器，反演過程中可視化結果")
+    parser.add_argument("--no-viewer", action="store_false", dest="viewer",
+                        help="禁用結果查看器")
+    parser.add_argument("--refresh-interval", type=int, default=5000,
+                        help="查看器刷新間隔（毫秒），默認5000ms")
+    parser.set_defaults(viewer=True)  # 默認啟用查看器
+    
     return parser.parse_args()
 
 def extract_datetime(urf_file):
@@ -74,6 +88,8 @@ def extract_datetime(urf_file):
 
 def main():
     """主程式"""
+    global viewer_process, update_queue
+    
     args = parse_args()
     
     # 讀取 YAML 設定檔
@@ -198,10 +214,45 @@ def main():
         os.makedirs(profile_inters_dir, exist_ok=True)
         print(f"已創建交集反演結果目錄: {xzv_inters_dir} 和 {profile_inters_dir}")
     
+    # 配置結果查看器
+    viewer_process = None
+    if args.viewer:
+        # 使用多進程啟動查看器，避免阻塞主流程
+        if platform.system() == "Windows":
+            # Windows 環境下的多進程啟動方式不同
+            multiprocessing.freeze_support()
+        
+        # 創建並啟動查看器進程
+        from multiprocessing import Queue
+        
+        # 創建共享隊列
+        update_queue = Queue()
+        
+        viewer_process = multiprocessing.Process(
+            target=start_viewer_process,
+            args=(output_dir, args.refresh_interval)
+        )
+        viewer_process.daemon = True  # 設置為守護進程，主進程結束時自動終止
+        viewer_process.start()
+        print(f"已啟動結果查看器，輸出目錄: {output_dir}, 刷新間隔: {args.refresh_interval}ms")
+    
     # 處理每個URF檔案
     process_combined_workflow(config, urf_files, do_intersection)
     
     print("\n===== 所有URF檔案處理完成 =====")
+    
+    # 結果查看器已經在後台運行，可以在這裡增加等待用戶關閉的提示
+    if viewer_process and viewer_process.is_alive():
+        # 最後通知結果查看器刷新
+        notify_viewer("所有處理完成")
+        
+        print("反演結果查看器正在運行中，請手動關閉查看器窗口以退出程序")
+        try:
+            # 等待用戶按下 Ctrl+C 終止程序
+            viewer_process.join()
+        except KeyboardInterrupt:
+            print("程序已終止")
+    
     return 0
 
 def prepare_config(config):
@@ -361,7 +412,12 @@ def run_inversion_single(config, urf_file):
     try:
         # 執行 pipeline 中的反演功能
         if pipeline.run_inversion_only(config, [urf_file]):
-            print(f"反演成功完成: {os.path.basename(urf_file)}")
+            basename = os.path.basename(urf_file)
+            print(f"反演成功完成: {basename}")
+            
+            # 通知結果查看器更新
+            notify_viewer(f"反演完成: {basename}")
+            
             return 0
         else:
             print(f"反演過程出現錯誤: {os.path.basename(urf_file)}")
@@ -570,6 +626,9 @@ def run_intersection_inversion_single(config, current_folder, previous_folders):
         rrms = mgr.inv.relrms()
         chi2 = mgr.inv.chi2()
         print(f"反演完成：rrms={rrms:.2f}%, chi²={chi2:.3f}")
+        
+        # 完成後通知查看器刷新
+        notify_viewer(f"交集反演完成: {current_folder}, rrms={rrms:.2f}%, chi²={chi2:.3f}")
     except Exception as e:
         print(f"錯誤：反演過程失敗: {str(e)}")
         import traceback
@@ -1203,6 +1262,61 @@ def run_intersection_inversion(config):
     else:
         print("沒有任何時間點需要進行交集反演，或所有時間點都已被跳過")
         return 0
+
+def start_viewer_process(output_dir, refresh_interval):
+    """啟動查看器進程的函數"""
+    import sys
+    from PyQt5.QtWidgets import QApplication
+    import queue
+    
+    # 創建一個共享隊列，用於接收更新通知
+    global update_queue
+    update_queue = queue.Queue()
+    
+    app = QApplication(sys.argv)
+    viewer = result_viewer.ResultMonitor(
+        result_dir=output_dir, 
+        output_dir=output_dir,
+        refresh_interval=refresh_interval
+    )
+    viewer.show()
+    
+    # 創建一個定時器，定期檢查是否有更新通知
+    from PyQt5.QtCore import QTimer
+    
+    # 定義檢查更新的函數
+    def check_updates():
+        try:
+            # 非阻塞方式檢查隊列
+            while not update_queue.empty():
+                # 取得更新消息
+                update_msg = update_queue.get_nowait()
+                print(f"結果查看器收到更新通知: {update_msg}")
+                # 強制刷新查看器
+                viewer.force_refresh()
+        except:
+            pass
+    
+    # 創建並啟動定時器
+    update_timer = QTimer()
+    update_timer.timeout.connect(check_updates)
+    update_timer.start(1000)  # 每秒檢查一次
+    
+    sys.exit(app.exec_())
+
+# 創建一個全局變量，保存查看器進程
+viewer_process = None
+update_queue = None
+
+def notify_viewer(message):
+    """通知結果查看器更新"""
+    global update_queue
+    if update_queue is not None:
+        try:
+            update_queue.put(message)
+            print(f"已通知結果查看器更新: {message}")
+        except:
+            print("通知結果查看器失敗")
 
 if __name__ == "__main__":
     sys.exit(main()) 
