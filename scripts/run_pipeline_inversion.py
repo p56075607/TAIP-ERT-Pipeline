@@ -36,11 +36,19 @@ from datetime import datetime
 import shutil
 import multiprocessing
 import platform
+import signal
+import importlib
+import time
 
 # 現在導入自定義模組
 from src.taip_ert_pipeline import pipeline
 from src.taip_ert_pipeline import visualization
 from src.taip_ert_pipeline import result_viewer
+
+# 全局變量
+latest_result_info = None
+viewer_process = None
+update_queue = None
 
 def parse_args():
     """解析命令列參數"""
@@ -300,6 +308,10 @@ def process_combined_workflow(config, urf_files, do_intersection):
     else:
         print("交集反演已禁用 - 僅執行常規反演")
     
+    # 追蹤最新處理的時段資訊
+    latest_folder_name = None
+    latest_repeat_or_intersection = None
+    
     # 處理每個URF文件，按順序完成常規反演和交集反演
     for idx, urf_file in enumerate(urf_files):
         # 提取時間戳資訊
@@ -309,6 +321,9 @@ def process_combined_workflow(config, urf_files, do_intersection):
         
         print(f"\n===== 處理 [{idx+1}/{len(urf_files)}] {os.path.basename(urf_file)} =====")
         print(f"時間點: {time_part}, 資料夾: {folder_name}")
+        
+        # 更新最新時段資訊
+        latest_folder_name = folder_name
         
         # 1. 檢查常規反演是否需要執行
         regular_xzv_file = os.path.join(xzv_dir, f"{time_part}.xzv")
@@ -323,8 +338,25 @@ def process_combined_workflow(config, urf_files, do_intersection):
                 print(f"常規反演失敗，跳過後續處理")
                 continue
             print(f"常規反演完成：{urf_basename}")
+            
+            # 常規反演成功，更新最新的反演結果為最新的 repeat 資料夾
+            repeat_folders = [d for d in os.listdir(os.path.join(output_dir, folder_name)) 
+                            if os.path.isdir(os.path.join(output_dir, folder_name, d)) and d.startswith("repeat_")]
+            if repeat_folders:
+                repeat_folders.sort(key=lambda x: int(x.split("_")[1]), reverse=True)
+                latest_repeat_or_intersection = os.path.join(folder_name, repeat_folders[0])
+                print(f"更新最新反演結果: {latest_repeat_or_intersection}")
         else:
             print(f"跳過常規反演：{urf_basename}（檔案已存在：{regular_xzv_file}）")
+            
+            # 檢查是否有已完成的反演結果
+            if os.path.exists(os.path.join(output_dir, folder_name)):
+                repeat_folders = [d for d in os.listdir(os.path.join(output_dir, folder_name)) 
+                                if os.path.isdir(os.path.join(output_dir, folder_name, d)) and d.startswith("repeat_")]
+                if repeat_folders:
+                    repeat_folders.sort(key=lambda x: int(x.split("_")[1]), reverse=True)
+                    latest_repeat_or_intersection = os.path.join(folder_name, repeat_folders[0])
+                    print(f"已存在反演結果: {latest_repeat_or_intersection}")
         
         # 3. 如果不需要交集反演，直接跳到下一個檔案
         if not do_intersection:
@@ -338,6 +370,12 @@ def process_combined_workflow(config, urf_files, do_intersection):
         
         if not need_intersection_inversion:
             print(f"跳過交集反演：{urf_basename}（檔案已存在：{intersection_xzv_file}）")
+            
+            # 檢查是否有已完成的交集反演結果
+            if os.path.exists(os.path.join(output_dir, folder_name, "intersection")):
+                latest_repeat_or_intersection = os.path.join(folder_name, "intersection")
+                print(f"已存在交集反演結果: {latest_repeat_or_intersection}")
+            
             continue
         
         print(f"2. 檢查是否可以進行交集反演：{urf_basename}")
@@ -395,6 +433,21 @@ def process_combined_workflow(config, urf_files, do_intersection):
             print(f"交集反演失敗，繼續處理下一個時段")
         else:
             print(f"交集反演成功完成: {folder_name}")
+            # 交集反演成功，更新最新的反演結果為交集反演資料夾
+            latest_repeat_or_intersection = os.path.join(folder_name, "intersection")
+            print(f"更新最新反演結果: {latest_repeat_or_intersection}")
+    
+    # 在主程序中存儲最新的時段和反演結果資訊，用於後續使用
+    if latest_folder_name and latest_repeat_or_intersection:
+        # 生成全局變量用於保存最新結果資訊
+        global latest_result_info
+        latest_result_info = {
+            "folder_name": latest_folder_name,
+            "result_path": latest_repeat_or_intersection
+        }
+        print(f"完成處理，最新反演結果: {latest_repeat_or_intersection}")
+        # 通知結果查看器顯示最新結果
+        notify_viewer(f"處理完成，最新結果: {latest_repeat_or_intersection}")
     
     return 0
 
@@ -1292,21 +1345,77 @@ def start_viewer_process(output_dir, refresh_interval):
                 # 取得更新消息
                 update_msg = update_queue.get_nowait()
                 print(f"結果查看器收到更新通知: {update_msg}")
+                
+                # 檢查是否包含特定路徑信息
+                if "最新結果:" in update_msg:
+                    try:
+                        # 從消息中提取路徑信息
+                        result_path = update_msg.split("最新結果:")[1].strip()
+                        if result_path and os.path.exists(os.path.join(output_dir, result_path)):
+                            print(f"嘗試顯示最新結果: {result_path}")
+                            # 直接設置查看器的最新反演結果資料夾
+                            viewer.latest_repeat_folder = result_path
+                            # 強制更新路徑標籤
+                            viewer.update_path_label()
+                    except Exception as e:
+                        print(f"解析結果路徑時出錯: {str(e)}")
+                
                 # 強制刷新查看器
                 viewer.force_refresh()
-        except:
-            pass
+        except Exception as e:
+            print(f"檢查更新時出錯: {str(e)}")
     
     # 創建並啟動定時器
     update_timer = QTimer()
     update_timer.timeout.connect(check_updates)
     update_timer.start(1000)  # 每秒檢查一次
     
+    # 初始檢查該輸出目錄下的最新結果
+    def find_latest_result():
+        """尋找輸出目錄中最新的反演結果"""
+        try:
+            # 1. 列出並排序所有時段資料夾
+            sorted_folders = list_sorted_output_folders(output_dir)
+            if not sorted_folders:
+                print("沒有找到任何時段資料夾")
+                return
+                
+            # 2. 獲取最新的時段資料夾
+            latest_folder = sorted_folders[-1]
+            print(f"找到最新時段資料夾: {latest_folder}")
+            
+            # 3. 檢查是否有交集反演結果
+            if os.path.exists(os.path.join(output_dir, latest_folder, "intersection")):
+                latest_result = os.path.join(latest_folder, "intersection")
+                print(f"找到交集反演結果: {latest_result}")
+            else:
+                # 4. 尋找最新的 repeat 資料夾
+                repeat_folders = [d for d in os.listdir(os.path.join(output_dir, latest_folder)) 
+                                if os.path.isdir(os.path.join(output_dir, latest_folder, d)) and d.startswith("repeat_")]
+                if repeat_folders:
+                    repeat_folders.sort(key=lambda x: int(x.split("_")[1]), reverse=True)
+                    latest_result = os.path.join(latest_folder, repeat_folders[0])
+                    print(f"找到最新反演結果: {latest_result}")
+                else:
+                    print(f"在最新時段 {latest_folder} 中沒有找到任何反演結果")
+                    return
+            
+            # 5. 設置查看器顯示該結果
+            viewer.latest_repeat_folder = latest_result
+            viewer.update_path_label()
+            viewer.force_refresh()
+            print(f"已設置查看器顯示最新結果: {latest_result}")
+            
+        except Exception as e:
+            print(f"尋找最新結果時出錯: {str(e)}")
+    
+    # 啟動一個延遲定時器，在界面加載後尋找最新結果
+    initial_timer = QTimer()
+    initial_timer.setSingleShot(True)
+    initial_timer.timeout.connect(find_latest_result)
+    initial_timer.start(2000)  # 2秒後執行一次
+    
     sys.exit(app.exec_())
-
-# 創建一個全局變量，保存查看器進程
-viewer_process = None
-update_queue = None
 
 def notify_viewer(message):
     """通知結果查看器更新"""
