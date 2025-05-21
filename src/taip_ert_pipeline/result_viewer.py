@@ -19,7 +19,7 @@ class ResultViewer(QMainWindow):
         
         if not self.info_file:
             # 嘗試尋找反演信息文件
-            default_info_path = os.path.join(result_dir, "ERTManager/inv_info.txt")
+            default_info_path = os.path.join(result_dir, "ERTManager","inv_info.txt")
             
             # 先檢查是否有反演時間資料夾
             recent_folder = self._find_most_recent_folder(result_dir)
@@ -28,7 +28,7 @@ class ResultViewer(QMainWindow):
                 latest_repeat = self._find_latest_repeat(os.path.join(result_dir, recent_folder))
                 if latest_repeat:
                     self.latest_repeat_folder = os.path.join(recent_folder, latest_repeat)
-                    recent_info_path = os.path.join(result_dir, recent_folder, latest_repeat, "ERTManager/inv_info.txt")
+                    recent_info_path = os.path.join(result_dir, recent_folder, latest_repeat, "ERTManager","inv_info.txt")
                     print(f"找到最新反演結果: {self.latest_repeat_folder}")
                     self.info_file = recent_info_path if os.path.exists(recent_info_path) else default_info_path
                 else:
