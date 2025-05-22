@@ -463,7 +463,7 @@ class ResultViewer(QMainWindow):
                     if self.latest_repeat_folder != new_repeat_folder:
                         print(f"找到新的反演結果資料夾: {new_repeat_folder}")
                         self.latest_repeat_folder = new_repeat_folder
-                        new_info_path = os.path.join(self.result_dir, new_repeat_folder, "ERTManager/inv_info.txt")
+                        new_info_path = os.path.join(self.result_dir, new_repeat_folder, "ERTManager","inv_info.txt")
                         
                         if os.path.exists(new_info_path):
                             self.info_file = new_info_path
