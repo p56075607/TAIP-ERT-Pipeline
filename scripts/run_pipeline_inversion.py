@@ -522,9 +522,155 @@ def process_all_intersections(config):
     # 執行交集反演
     return run_intersection_inversion(config)
 
-def run_intersection_inversion_single(config, current_folder, previous_folders):
+def run_intersection_inversion(config, current_folder=None, previous_folders=None):
     """
-    執行單一時段的交集反演
+    執行交集反演流程
+    
+    參數:
+        config: 配置字典
+        current_folder: 當前資料夾名稱（如指定，則僅處理該時段）
+        previous_folders: 前三個資料夾名稱的列表（如指定current_folder但未指定此參數，則自動選擇）
+        
+    返回:
+        int: 0表示成功，非0表示失敗
+    """
+    # 取得輸出目錄
+    output_dir = config["output"].get("output_dir", "output")
+    
+    # 檢查並創建交集反演結果目錄
+    xzv_inters_dir = os.path.join(output_dir, "xzv_inters")
+    profile_inters_dir = os.path.join(output_dir, "profile_inters")
+    
+    os.makedirs(xzv_inters_dir, exist_ok=True)
+    os.makedirs(profile_inters_dir, exist_ok=True)
+    
+    # 單一時段模式
+    if current_folder is not None:
+        print(f"\n===== 執行單一時段交集反演: {current_folder} =====")
+        
+        # 如果沒有提供前三個時段，則自動選擇
+        if previous_folders is None:
+            # 獲取並排序所有時間資料夾
+            sorted_folders = list_sorted_output_folders(output_dir)
+            
+            try:
+                current_index = sorted_folders.index(current_folder)
+                
+                # 檢查是否有足夠的前序時段
+                if current_index < 3:
+                    print(f"錯誤：當前時段 {current_folder} 前面沒有足夠的時段（需要至少3個），無法進行交集反演")
+                    return 1
+                
+                # 選擇前三個時段
+                previous_folders = [
+                    sorted_folders[current_index-3], 
+                    sorted_folders[current_index-2], 
+                    sorted_folders[current_index-1]
+                ]
+                print(f"自動選擇前三個時段: {', '.join(previous_folders)}")
+            except ValueError:
+                print(f"錯誤：在排序列表中找不到當前時段 {current_folder}，無法進行交集反演")
+                return 1
+        
+        # 執行單一時段的交集反演
+        return _process_single_intersection(config, current_folder, previous_folders)
+    
+    # 批量時段模式
+    print(f"\n===== 執行批量交集反演 =====")
+    print(f"交集反演結果將儲存至: {xzv_inters_dir} 和 {profile_inters_dir}")
+    
+    # 獲取並排序所有時間資料夾
+    sorted_folders = list_sorted_output_folders(output_dir)
+    
+    print(f"找到 {len(sorted_folders)} 個時間序列資料夾")
+    for i, folder in enumerate(sorted_folders[:10]):  # 只顯示前10個
+        print(f"{i+1}. {folder}")
+    
+    if len(sorted_folders) > 10:
+        print(f"... 還有 {len(sorted_folders)-10} 個資料夾")
+    
+    # 從第四個時間點開始處理
+    if len(sorted_folders) < 4:
+        print("錯誤：資料夾數量少於4個，無法繼續")
+        return 1
+    
+    # 過濾需要處理的時間點資料夾
+    filtered_folders = []
+    skipped_folders = []
+    
+    # 只考慮從第四個時間點開始的資料夾
+    for i in range(3, len(sorted_folders)):
+        current_folder = sorted_folders[i]
+        
+        # 提取當前資料夾的時間戳
+        time_part = current_folder.split('_')[0]
+        
+        # 檢查對應的交集反演結果是否已存在
+        xzv_inters_file = os.path.join(xzv_inters_dir, f"{time_part}.xzv")
+        
+        # 如果 XZV 檔案存在，則跳過該時間點
+        if os.path.exists(xzv_inters_file):
+            print(f"跳過處理 {current_folder}，對應的交集反演 XZV 檔案已存在: {xzv_inters_file}")
+            skipped_folders.append(current_folder)
+            continue
+            
+        # 檢查是否已完成第四次反演和前三個時間點
+        if not check_repeat_4_complete(output_dir, current_folder):
+            print(f"警告：{current_folder} 未完成第四次反演，跳過處理")
+            continue
+            
+        # 檢查前三個時間點是否都完成第四次反演
+        previous_folders = [sorted_folders[i-3], sorted_folders[i-2], sorted_folders[i-1]]
+        all_previous_complete = True
+        for folder in previous_folders:
+            if not check_repeat_4_complete(output_dir, folder):
+                print(f"警告：{folder} 未完成第四次反演，跳過處理")
+                all_previous_complete = False
+                break
+                
+        if not all_previous_complete:
+            continue
+        
+        # 如果通過所有檢查，則加入處理列表
+        filtered_folders.append((i, current_folder, previous_folders))
+    
+    # 更新要處理的資料夾列表
+    if skipped_folders:
+        print(f"已跳過 {len(skipped_folders)} 個已處理的時間點: {', '.join(skipped_folders)}")
+    
+    if not filtered_folders:
+        print(f"所有時間點都已處理完成，無需執行交集反演")
+        return 0
+    
+    print(f"將對 {len(filtered_folders)} 個時間點進行交集反演")
+    
+    # 迭代處理已過濾的時間點
+    processed_count = 0
+    folder_count = len(filtered_folders)
+    
+    for idx, (i, current_folder, previous_folders) in enumerate(filtered_folders):
+        print(f"\n===== 處理第 {idx+1}/{folder_count} 個時間點（整體進度 {i+1}/{len(sorted_folders)}）：{current_folder} =====")
+        print(f"前三個時間點：{previous_folders[0]}, {previous_folders[1]}, {previous_folders[2]}")
+        
+        # 執行單一時段的交集反演
+        result = _process_single_intersection(config, current_folder, previous_folders)
+        
+        if result == 0:
+            print(f"成功完成 {current_folder} 的交集反演")
+            processed_count += 1
+        else:
+            print(f"處理 {current_folder} 的交集反演失敗")
+    
+    if processed_count > 0:
+        print(f"交集反演已完成，處理了 {processed_count} 個時間點")
+        return 0
+    else:
+        print("沒有任何時間點需要進行交集反演，或所有時間點都已被跳過")
+        return 0
+
+def _process_single_intersection(config, current_folder, previous_folders):
+    """
+    處理單一時段的交集反演
     
     參數:
         config: 配置字典
@@ -1031,306 +1177,20 @@ def check_data_consistency(data_list):
     print("所有數據集的資料點數量差異在允許範圍內（不超過25%）")
     return True
 
-def run_intersection_inversion(config):
+def run_intersection_inversion_single(config, current_folder, previous_folders):
     """
-    執行交集反演流程
+    執行單一時段的交集反演 (已棄用，請改用 run_intersection_inversion 函數)
     
     參數:
         config: 配置字典
-    
+        current_folder: 當前資料夾名稱
+        previous_folders: 前三個資料夾名稱的列表
+        
     返回:
         int: 0表示成功，非0表示失敗
     """
-    # 取得輸出目錄
-    output_dir = config["output"].get("output_dir", "output")
-    
-    # 檢查並創建交集反演結果目錄
-    xzv_inters_dir = os.path.join(output_dir, "xzv_inters")
-    profile_inters_dir = os.path.join(output_dir, "profile_inters")
-    
-    os.makedirs(xzv_inters_dir, exist_ok=True)
-    os.makedirs(profile_inters_dir, exist_ok=True)
-    
-    print(f"交集反演結果將儲存至: {xzv_inters_dir} 和 {profile_inters_dir}")
-    
-    # 從配置文件中讀取設置
-    base_path = output_dir
-    colormap_file = config["output"].get("colormap_file")
-    title_verbose = config["output"].get("title_verbose", False)
-    print(f"使用配置：base_path={base_path}, colormap_file={colormap_file}, title_verbose={title_verbose}")
-    
-    # 獲取並排序所有時間資料夾
-    sorted_folders = list_sorted_output_folders(base_path)
-    
-    print(f"找到 {len(sorted_folders)} 個時間序列資料夾")
-    for i, folder in enumerate(sorted_folders[:10]):  # 只顯示前10個
-        print(f"{i+1}. {folder}")
-    
-    if len(sorted_folders) > 10:
-        print(f"... 還有 {len(sorted_folders)-10} 個資料夾")
-    
-    # 從第四個時間點開始處理
-    if len(sorted_folders) < 4:
-        print("錯誤：資料夾數量少於4個，無法繼續")
-        return 1
-    
-    # 過濾需要處理的時間點資料夾 - 參考 run_inversion 的邏輯
-    filtered_folders = []
-    skipped_folders = []
-    
-    # 只考慮從第四個時間點開始的資料夾
-    for i in range(3, len(sorted_folders)):
-        current_folder = sorted_folders[i]
-        
-        # 提取當前資料夾的時間戳
-        time_part = current_folder.split('_')[0]
-        
-        # 檢查對應的交集反演結果是否已存在
-        xzv_inters_file = os.path.join(xzv_inters_dir, f"{time_part}.xzv")
-        
-        # 如果 XZV 檔案存在，則跳過該時間點
-        if os.path.exists(xzv_inters_file):
-            print(f"跳過處理 {current_folder}，對應的交集反演 XZV 檔案已存在: {xzv_inters_file}")
-            skipped_folders.append(current_folder)
-            continue
-            
-        # 檢查是否已完成第四次反演和前三個時間點
-        if not check_repeat_4_complete(base_path, current_folder):
-            print(f"警告：{current_folder} 未完成第四次反演，跳過處理")
-            continue
-            
-        # 檢查前三個時間點是否都完成第四次反演
-        previous_folders = [sorted_folders[i-3], sorted_folders[i-2], sorted_folders[i-1]]
-        all_previous_complete = True
-        for folder in previous_folders:
-            if not check_repeat_4_complete(base_path, folder):
-                print(f"警告：{folder} 未完成第四次反演，跳過處理")
-                all_previous_complete = False
-                break
-                
-        if not all_previous_complete:
-            continue
-        
-        # 如果通過所有檢查，則加入處理列表
-        filtered_folders.append((i, current_folder, previous_folders))
-    
-    # 更新要處理的資料夾列表
-    if skipped_folders:
-        print(f"已跳過 {len(skipped_folders)} 個已處理的時間點: {', '.join(skipped_folders)}")
-    
-    if not filtered_folders:
-        print(f"所有時間點都已處理完成，無需執行交集反演")
-        return 0
-    
-    print(f"將對 {len(filtered_folders)} 個時間點進行交集反演")
-    
-    # 設置反演參數
-    if "inversion" in config:
-        lam = config["inversion"].get("lam", 1000)
-        z_weight = config["inversion"].get("z_weight", 1)
-        max_iter = config["inversion"].get("max_iter", 6)
-        resistivity_limits = config["inversion"].get("limits", [1, 10000])
-    else:
-        lam = 1000  # 正則化參數
-        z_weight = 1  # 垂直權重
-        max_iter = 6  # 最大迭代次數
-        resistivity_limits = [1, 10000]  # 電阻率限制
-    
-    # 初始化視覺化器 - 使用配置文件中的色彩圖路徑
-    visualization_config = {
-        "root_dir": base_path,
-        "colormap_file": colormap_file,
-        "title_verbose": title_verbose
-    }
-    
-    visualizer = visualization.ERTVisualizer(visualization_config)
-    
-    # 迭代處理已過濾的時間點
-    processed_count = 0
-    folder_count = len(filtered_folders)
-    
-    for idx, (i, current_folder, previous_folders) in enumerate(filtered_folders):
-        print(f"\n===== 處理第 {idx+1}/{folder_count} 個時間點（整體進度 {i+1}/{len(sorted_folders)}）：{current_folder} =====")
-        print(f"前三個時間點：{previous_folders[0]}, {previous_folders[1]}, {previous_folders[2]}")
-        
-        # 提取當前資料夾的時間戳
-        time_part = current_folder.split('_')[0]
-        
-        # 3. 載入當前和前三個時間點的資料
-        current_data = load_inversion_data(base_path, current_folder)
-        previous_data_list = [load_inversion_data(base_path, folder) for folder in previous_folders]
-        
-        if current_data is None:
-            print(f"錯誤：無法載入 {current_folder} 的資料，跳過處理")
-            continue
-        
-        if None in previous_data_list:
-            print(f"錯誤：無法載入某些前序資料，跳過處理")
-            continue
-        
-        # 將當前資料和前三個時間點的資料合併為一個列表
-        all_data_list = previous_data_list + [current_data]
-        
-        # 4. 檢查資料一致性 - 資料點數量差異不應超過25%
-        if not check_data_consistency(all_data_list):
-            print(f"警告：資料點數量差異超過閾值，跳過處理 {current_folder}")
-            continue
-        
-        # 5. 找出共同的電極組合
-        common_quadruples = find_common_quadruples(all_data_list)
-        
-        if len(common_quadruples) == 0:
-            print(f"錯誤：找不到共同的電極組合，跳過處理")
-            continue
-        
-        # 6. 過濾資料，只保留共同的電極組合
-        filtered_data_list = filter_by_common_quadruples(all_data_list, common_quadruples)
-        
-        # 7. 獲取當前時間點的網格和電阻率模型
-        mesh, initial_model = load_mesh_and_model(base_path, current_folder)
-        
-        if mesh is None:
-            print(f"錯誤：無法載入 {current_folder} 的網格，跳過處理")
-            continue
-        
-        # 8. 使用當前時間點過濾後的資料進行反演
-        current_filtered_data = filtered_data_list[-1]  # 當前時間點的資料是列表中的最後一個
-        
-        print(f"開始反演，資料點數：{len(current_filtered_data['rhoa'])}")
-        
-        # 創建 ERT 管理器
-        mgr = ert.ERTManager(current_filtered_data)
-        
-        # 執行反演，使用初始模型（如果可用）
-        if initial_model is not None:
-            print(f"使用上一次反演結果作為初始模型")
-            model = mgr.invert(current_filtered_data, mesh=mesh,
-                             startModel=initial_model,
-                             lam=lam, zWeight=z_weight,
-                             maxIter=max_iter,
-                             limits=resistivity_limits,
-                             verbose=True)
-        else:
-            print(f"使用默認初始模型")
-            model = mgr.invert(current_filtered_data, mesh=mesh,
-                             lam=lam, zWeight=z_weight,
-                             maxIter=max_iter,
-                             limits=resistivity_limits,
-                             verbose=True)
-        
-        # 計算反演結果的誤差統計
-        rrms = mgr.inv.relrms()
-        chi2 = mgr.inv.chi2()
-        print(f"反演完成：rrms={rrms:.2f}%, chi²={chi2:.3f}")
-        
-        # 9. 創建儲存路徑 - 修改為新結構
-        # 先創建臨時的目錄結構
-        temp_intersection_path = os.path.join(base_path, current_folder, "intersection")
-        temp_intersection_ert_path = os.path.join(temp_intersection_path, "ERTManager")
-        os.makedirs(temp_intersection_ert_path, exist_ok=True)
-        
-        # 10. 儲存反演結果
-        # 使用 saveResult 會自動創建 ERTManager 目錄並保存多個文件
-        path, fig, ax = mgr.saveResult(temp_intersection_path) # 會自動創建 ERTManager 文件夾
-        plt.close(fig)
-        
-        # 額外保存資料文件
-        mgr.data.save(os.path.join(temp_intersection_ert_path, f"{current_folder}_inv.ohm"))
-        
-        # 儲存模型響應
-        pg.utils.saveResult(os.path.join(temp_intersection_ert_path, 'model_response.txt'),
-                          data=mgr.inv.response, mode='w')
-        
-        # 保存其他反演信息
-        rrmsHistory = mgr.inv.rrmsHistory
-        chi2History = mgr.inv.chi2History
-        export_inversion_info(mgr, temp_intersection_path, lam, rrmsHistory, chi2History)
-        
-        # 11. 使用標準的視覺化工具生成圖表
-        print(f"使用標準視覺化模組生成圖表")
-        try:
-            # 先讓 ERTVisualizer 加載反演結果
-            results = visualizer.load_inversion_results(temp_intersection_path)
-            
-            # 如果視覺化器沒有找到 rrms 和 chi2，從 mgr 中取值
-            if not results or results.get("rrms") is None or results.get("chi2") is None:
-                print("視覺化器未能從文件中讀取到 rrms 和 chi2 值，使用反演結果中的值")
-                
-                # 將值寫入到相應的文件中
-                info_file = export_inversion_info(mgr, temp_intersection_path, lam, rrmsHistory, chi2History)
-                
-                # 重新加載反演結果
-                results = visualizer.load_inversion_results(temp_intersection_path)
-                if not results:
-                    print("警告：即使在重新導出反演信息後仍無法加載反演結果")
-            else:
-                print(f"成功加載反演結果，rrms={results.get('rrms')}, chi2={results.get('chi2')}")
-            
-            # 設置額外的可視化參數
-            plot_kwargs = {
-                "title_verbose": title_verbose,  # 使用配置中的設置
-                'cMin': 10,                   # 最小電阻率值
-                'cMax': 1000,                 # 最大電阻率值
-                'label': 'Resistivity $\\Omega$m', 
-            }
-            
-            # 從配置文件中獲取 XZV 文件路徑
-            xzv_file = config.get("inversion", {}).get("xzv_file", None)
-            if xzv_file and os.path.exists(xzv_file):
-                print(f"使用 XZV 文件: {xzv_file}")
-                # 使用 XZV 文件生成更精確的等值線圖
-                try:
-                    visualizer.plot_all(temp_intersection_path, current_folder, xzv_file, **plot_kwargs)
-                    print("成功使用 XZV 文件生成視覺化結果")
-                except Exception as e:
-                    print(f"使用 XZV 文件生成視覺化結果失敗: {str(e)}，嘗試不使用 XZV 文件")
-                    visualizer.plot_all(temp_intersection_path, current_folder, **plot_kwargs)
-            else:
-                # 不使用 XZV 文件
-                print("未指定 XZV 文件或文件不存在，不使用 XZV 文件生成視覺化結果")
-                visualizer.plot_all(temp_intersection_path, current_folder, **plot_kwargs)
-            
-            # 複製生成的檔案到新的資料夾結構
-            # 1. 複製 XZV 檔案到 xzv_inters 目錄
-            src_xzv = os.path.join(temp_intersection_path, "ERTManager", f"{time_part}.xzv")
-            if os.path.exists(src_xzv):
-                try:
-                    shutil.copy2(src_xzv, xzv_inters_dir)
-                    print(f"已複製 XZV 檔案到: {xzv_inters_dir}/{time_part}.xzv")
-                except Exception as e:
-                    print(f"複製 XZV 檔案失敗: {str(e)}")
-            else:
-                print(f"警告: 找不到 XZV 檔案: {src_xzv}")
-            
-            # 2. 複製 PNG 檔案到 profile_inters 目錄
-            src_profile = os.path.join(temp_intersection_path, "inverted_profile.png")
-            if os.path.exists(src_profile):
-                try:
-                    dst_profile = os.path.join(profile_inters_dir, f"{time_part}.png")
-                    shutil.copy2(src_profile, dst_profile)
-                    print(f"已複製 profile 檔案到: {dst_profile}")
-                except Exception as e:
-                    print(f"複製 profile 檔案失敗: {str(e)}")
-            else:
-                print(f"警告: 找不到 profile 檔案: {src_profile}")
-            
-            # 3. 保留臨時目錄的完整結果，以供後續分析
-            
-            print(f"成功生成所有視覺化結果")
-            processed_count += 1
-        except Exception as e:
-            print(f"視覺化生成過程中出現錯誤: {str(e)}")
-            import traceback
-            traceback.print_exc()  # 打印詳細錯誤堆疊
-            
-        print(f"成功完成 {current_folder} 的交集反演，結果已儲存到 {temp_intersection_path} 並複製到指定目錄")
-    
-    if processed_count > 0:
-        print(f"交集反演已完成，處理了 {processed_count} 個時間點")
-        return 0
-    else:
-        print("沒有任何時間點需要進行交集反演，或所有時間點都已被跳過")
-        return 0
+    print("警告：run_intersection_inversion_single 已棄用，請改用 run_intersection_inversion 函數")
+    return run_intersection_inversion(config, current_folder, previous_folders)
 
 def start_viewer_process(output_dir, refresh_interval):
     """啟動查看器進程的函數"""
