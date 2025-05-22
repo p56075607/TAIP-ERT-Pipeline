@@ -479,8 +479,36 @@ def run_inversion_single(config, urf_file):
         if pipeline.run_inversion_only(config, [urf_file]):
             print(f"反演成功完成: {basename}")
             
-            # 通知結果查看器更新，並提供足夠時間加載圖片
-            notify_viewer(f"反演完成，請完整更新: {basename}")
+            # 從 basename 提取時間戳部分
+            time_part = basename.split('_')[0]  # 獲取 "YYMMDDHH" 部分
+            folder_name = f"{time_part}_m_T1"  # 資料夾名稱
+            
+            # 尋找最新的 repeat 資料夾
+            if os.path.exists(os.path.join(output_dir, folder_name)):
+                repeat_folders = [d for d in os.listdir(os.path.join(output_dir, folder_name)) 
+                                if os.path.isdir(os.path.join(output_dir, folder_name, d)) and d.startswith("repeat_")]
+                if repeat_folders:
+                    repeat_folders.sort(key=lambda x: int(x.split("_")[1]), reverse=True)
+                    latest_repeat = repeat_folders[0]
+                    latest_result_path = os.path.join(folder_name, latest_repeat)
+                    
+                    # 檢查資訊文件是否存在
+                    info_file = os.path.join(output_dir, latest_result_path, "ERTManager/inv_info.txt")
+                    if os.path.exists(info_file):
+                        print(f"找到反演結果資訊檔: {info_file}")
+                    else:
+                        print(f"警告: 找不到反演結果資訊檔: {info_file}")
+                    
+                    # 通知結果查看器更新，並提供最新結果路徑
+                    notify_viewer(f"反演完成，請完整更新: {basename}")
+                    time.sleep(0.5)  # 確保文件已經完全寫入
+                    notify_viewer(f"最新結果: {latest_result_path}")
+                else:
+                    print(f"警告: 在 {folder_name} 中找不到 repeat 資料夾")
+                    notify_viewer(f"反演完成，請完整更新: {basename}")
+            else:
+                print(f"警告: 找不到資料夾 {folder_name}")
+                notify_viewer(f"反演完成，請完整更新: {basename}")
             
             return 0
         else:
@@ -844,6 +872,11 @@ def _process_single_intersection(config, current_folder, previous_folders):
         
         # 完成後通知查看器刷新
         notify_viewer(f"交集反演完成: {current_folder}, rrms={rrms:.2f}%, chi²={chi2:.3f}")
+        
+        # 在通知完成後，添加明確的結果路徑通知
+        intersection_result_path = os.path.join(current_folder, "intersection")
+        time.sleep(0.5)  # 確保文件已經完全寫入
+        notify_viewer(f"最新結果: {intersection_result_path}")
     except Exception as e:
         print(f"錯誤：反演過程失敗: {str(e)}")
         import traceback
@@ -1232,6 +1265,15 @@ def start_viewer_process(output_dir, refresh_interval):
                             print(f"切換到指定結果目錄: {result_path}")
                             # 直接設置查看器的最新反演結果資料夾
                             viewer.latest_repeat_folder = result_path
+                            
+                            # 更新 info_file 路徑 - 解決資訊未更新的問題
+                            new_info_path = os.path.join(output_dir, result_path, "ERTManager/inv_info.txt")
+                            if os.path.exists(new_info_path):
+                                viewer.info_file = new_info_path
+                                print(f"更新資訊檔案路徑: {new_info_path}")
+                            else:
+                                print(f"警告: 找不到資訊檔案: {new_info_path}")
+                            
                             # 強制更新路徑標籤
                             viewer.update_path_label()
                             # 重新加載圖片和資訊
@@ -1257,6 +1299,8 @@ def start_viewer_process(output_dir, refresh_interval):
                     viewer.force_refresh()
         except Exception as e:
             print(f"檢查更新時出錯: {str(e)}")
+            import traceback
+            traceback.print_exc()  # 印出詳細錯誤堆疊
     
     # 創建並啟動定時器
     update_timer = QTimer()
@@ -1305,6 +1349,14 @@ def start_viewer_process(output_dir, refresh_interval):
                 print(f"需要重新載入結果: {latest_result}")
                 viewer.latest_repeat_folder = latest_result
                 
+                # 更新 info_file 路徑 - 解決資訊未更新的問題
+                new_info_path = os.path.join(output_dir, latest_result, "ERTManager/inv_info.txt")
+                if os.path.exists(new_info_path):
+                    viewer.info_file = new_info_path
+                    print(f"更新資訊檔案路徑: {new_info_path}")
+                else:
+                    print(f"警告: 找不到資訊檔案: {new_info_path}")
+                
                 # 如果強制重載或路徑變更，執行完整加載
                 # 清除現有圖像緩存
                 viewer._clear_layout(viewer.grid_layout)
@@ -1321,6 +1373,8 @@ def start_viewer_process(output_dir, refresh_interval):
                 
         except Exception as e:
             print(f"尋找最新結果時出錯: {str(e)}")
+            import traceback
+            traceback.print_exc()  # 印出詳細錯誤堆疊
     
     # 啟動一個延遲定時器，在界面加載後尋找最新結果
     initial_timer = QTimer()
@@ -1335,10 +1389,21 @@ def notify_viewer(message):
     global update_queue
     if update_queue is not None:
         try:
+            # 檢查是否是反演完成的消息
+            if "反演完成" in message:
+                # 為反演完成消息添加時間戳，確保每次通知都被視為不同的消息
+                message = f"{message} (時間: {time.time()})"
+                print(f"發送反演完成通知: {message}")
+                
+                # 等待一小段時間，確保文件已經寫入完成
+                time.sleep(1)
+            
             update_queue.put(message)
             print(f"已通知結果查看器更新: {message}")
-        except:
-            print("通知結果查看器失敗")
+        except Exception as e:
+            print(f"通知結果查看器失敗: {str(e)}")
+            import traceback
+            traceback.print_exc()  # 印出詳細錯誤堆疊
 
 if __name__ == "__main__":
     sys.exit(main()) 

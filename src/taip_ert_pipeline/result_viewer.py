@@ -365,16 +365,67 @@ class ResultViewer(QMainWindow):
     
     def load_inv_info(self):
         """載入並顯示inv_info.txt的內容"""
+        if not self.info_file:
+            self.info_text.setText("未設置資訊檔案路徑")
+            print("警告: 未設置資訊檔案路徑")
+            return
+            
+        print(f"嘗試載入資訊檔案: {self.info_file}")
+        
         if os.path.exists(self.info_file):
             try:
+                # 檢查文件大小，避免讀取空文件
+                file_size = os.path.getsize(self.info_file)
+                if file_size == 0:
+                    self.info_text.setText(f"資訊檔案為空：{self.info_file}")
+                    print(f"警告: 資訊檔案為空: {self.info_file}")
+                    return
+                
+                # 檢查文件是否可讀
+                if not os.access(self.info_file, os.R_OK):
+                    self.info_text.setText(f"無法讀取資訊檔案（權限問題）：{self.info_file}")
+                    print(f"警告: 無法讀取資訊檔案（權限問題）: {self.info_file}")
+                    return
+                
+                # 讀取文件內容
                 with open(self.info_file, 'r') as f:
                     info_content = f.read()
+                
+                # 檢查讀取到的內容是否為空
+                if not info_content.strip():
+                    self.info_text.setText(f"資訊檔案內容為空：{self.info_file}")
+                    print(f"警告: 資訊檔案內容為空: {self.info_file}")
+                    return
+                
+                # 設置文本內容
                 self.info_text.setText(info_content)
-                print(f"已載入反演資訊: {self.info_file}")
+                print(f"已載入反演資訊: {self.info_file}, 內容長度: {len(info_content)} 字符")
+                
+                # 強制刷新UI
+                self.info_text.repaint()
+                
             except Exception as e:
-                self.info_text.setText(f"讀取文件時出錯：{str(e)}")
+                error_msg = f"讀取資訊檔案時出錯：{str(e)}"
+                self.info_text.setText(error_msg)
+                print(f"錯誤: {error_msg}")
+                import traceback
+                traceback.print_exc()  # 印出詳細錯誤堆疊
         else:
-            self.info_text.setText(f"找不到文件：{self.info_file}")
+            error_msg = f"找不到資訊檔案：{self.info_file}"
+            self.info_text.setText(error_msg)
+            print(f"錯誤: {error_msg}")
+            
+            # 嘗試檢查目錄是否存在
+            dir_path = os.path.dirname(self.info_file)
+            if not os.path.exists(dir_path):
+                print(f"目錄不存在: {dir_path}")
+            else:
+                # 列出目錄中的文件
+                try:
+                    files = os.listdir(dir_path)
+                    print(f"目錄 {dir_path} 中的文件: {', '.join(files)}")
+                except Exception as e:
+                    print(f"無法列出目錄內容: {str(e)}")
     
     @pyqtSlot()
     def refresh(self, force_check=False):
