@@ -1108,7 +1108,7 @@ class ERTVisualizer:
         
         參數:
             result_path: 反演結果儲存路徑
-            xzv_file_path: .xzv 文件路徑
+            xzv_file_path: .xzv 文件路徑（可以為 None）
             file_name: 檔案名稱，用於圖表標題
             **kwargs: 繪圖參數
                 title_verbose: 是否顯示詳細標題，預設為 False
@@ -1121,17 +1121,20 @@ class ERTVisualizer:
             if not results:
                 return False
                 
-            # 讀取 xzv 文件
-            X, Y, data_xzv, IQR = self.read_xzv_file(xzv_file_path)
-            if X is None:
-                self.logger.warning(f"無法讀取 XZV 文件，使用默認網格生成方法")
-                return self.plot_inverted_contour(result_path, file_name, **kwargs)
-                
             mesh = results["paraDomain"]
             model = results["model"]
             data = results["data"]
             rrms = results["rrms"]
             chi2 = results["chi2"]
+            
+            # 讀取 xzv 文件（如果提供的話）
+            X, Y, data_xzv, IQR = None, None, None, None
+            if xzv_file_path and os.path.exists(xzv_file_path):
+                X, Y, data_xzv, IQR = self.read_xzv_file(xzv_file_path)
+                if X is None:
+                    self.logger.warning(f"無法讀取 XZV 文件，使用默認網格生成方法")
+            else:
+                self.logger.info("未提供 XZV 文件，使用默認網格生成方法")
             
             # 設置色彩映射
             custom_cmap = None
@@ -1148,11 +1151,25 @@ class ERTVisualizer:
             if custom_cmap is None:
                 custom_cmap = plt.cm.jet
             
-            # 獲取網格範圍
-            left = kwargs.get('xmin', np.min(X))
-            right = kwargs.get('xmax', np.max(X))
-            bottom = kwargs.get('ymin', np.min(Y))
-            top = kwargs.get('ymax', np.max(Y))
+            # 獲取網格範圍 - 如果沒有 XZV 文件，使用默認範圍
+            if X is not None and Y is not None:
+                left = kwargs.get('xmin', np.min(X))
+                right = kwargs.get('xmax', np.max(X))
+                bottom = kwargs.get('ymin', np.min(Y))
+                top = kwargs.get('ymax', np.max(Y))
+            else:
+                # 使用電極數據計算默認範圍
+                left = min(pg.x(data))
+                right = max(pg.x(data))
+                depth = (right - left) * 0.2  # 深度設為寬度的20%
+                top = max(pg.y(data))
+                bottom = min(pg.y(data)) - depth
+                
+                # 覆蓋默認值（如果在 kwargs 中指定）
+                left = kwargs.get('xmin', left)
+                right = kwargs.get('xmax', right)
+                bottom = kwargs.get('ymin', bottom)
+                top = kwargs.get('ymax', top)
             
             # 獲取模型數據的對數
             log_model = np.log10(model)
@@ -1476,9 +1493,9 @@ class ERTVisualizer:
             
             # 生成一個固定的網格，確保有 4650 個數據點
             # 參考文件中 X 從 3.999 到 188.001，以 2.0 為步進
-            # Y 從 1111.6398 到 1201.5941，共 46 個不同的值
+            # Y 從 1111.6398 到 1209.5900，共 50 個不同的值
             x_vals = np.linspace(3.999, 188.001, 93)
-            y_vals = np.linspace(1111.6398, 1201.5941, 50)
+            y_vals = np.linspace(1111.6398, 1209.5900, 50)
             
             # 確保有 4650 個點 (93 x 50 = 4650)
             output_data = []
