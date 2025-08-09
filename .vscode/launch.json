@@ -18,6 +18,24 @@
             "args": ["--config", "configs/site.yaml"],
             "console": "integratedTerminal",
             "justMyCode": true
+        },
+        {
+            "name": "Python: 運行腳本 R2MS 農試所E1",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_pipeline_R2MS.py",
+            "args": ["--config", "configs/site_TARI_E1.yaml"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: 運行腳本 R2MS 農試所E2",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/run_pipeline_R2MS.py",
+            "args": ["--config", "configs/site_TARI_E2.yaml"],
+            "console": "integratedTerminal",
+            "justMyCode": true
         }
     ]
 }

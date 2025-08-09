@@ -181,5 +181,5 @@ resp.vec
 respRez.vec
 
 # Project site confg and batch file which contain the absolute path 
-configs/site.yaml
+*.yaml
 *.bat
