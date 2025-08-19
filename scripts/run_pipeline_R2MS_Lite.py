@@ -90,8 +90,8 @@ def download_csv_from_ftp(ftp_config, target_datetime, local_root_path):
                     
                     print(f"成功進入目錄: {target_path}")
                     
-                    # CSV 檔案名格式: S004YYYYMMDDHHM*.v299.csv
-                    csv_pattern = f"S004{year}{month}{day}{hour}"
+                    # CSV 檔案名格式: S005YYYYMMDDHHM*.v299.csv
+                    csv_pattern = f"S005{year}{month}{day}{hour}"
                     
                     # 檢查所有檔案，找到符合格式的 CSV
                     file_list = ftp.nlst()
@@ -264,7 +264,8 @@ def run_acquisition_lite(config):
                 urf_filename = f"{csv_parent_dir}{csv_hour}_m_{line_name}.urf"
                 
                 # 使用 csv2urf 轉換
-                plot_wave = hour in config['data'].get('plot_time', [0, 4, 9, 10, 14, 20])
+                plot_wave = (int(csv_hour) in config['data'].get('plot_time', [0, 4, 9, 10, 14, 20]))
+                print(f"開始處理 ERT 資料: {csv_parent_dir}{csv_hour}_E")
                 result = utils.csv2urf(
                     csv_files=[csv_file],
                     one_intelligent_ERT_survey_geo_file=geo_file,
@@ -274,13 +275,30 @@ def run_acquisition_lite(config):
                     plot_wave=plot_wave,
                     png_file_first_name=csv_basename,
                     amplitude_estimate_start_position=config['data'].get('amplitude_estimate_start_position', 2),
-                    amplitude_estimate_range=config['data'].get('amplitude_estimate_range', 4)
+                    amplitude_estimate_range=config['data'].get('amplitude_estimate_range', 4),
+                    contain_common_N=config['data'].get('contain_common_N', False)
                 )
                 
                 if result == 0:
                     urf_file_path = os.path.join(urf_output_dir, urf_filename)
                     urf_files.append(urf_file_path)
                     print(f"成功轉換: {csv_file} -> {urf_file_path}")
+                    # 檢查文件是否真的存在
+                    if os.path.isfile(urf_file_path):
+                        # 複製 URF 檔案到反演測試目錄
+                        inversion_urf_dir = os.path.join(root_path + '_test', 'urf')
+                        if not os.path.exists(inversion_urf_dir):
+                            os.makedirs(inversion_urf_dir)
+                            
+                        target_path = os.path.join(inversion_urf_dir, urf_filename)
+                        if not os.path.isfile(target_path):
+                            try:
+                                shutil.copy2(urf_file_path, target_path)
+                                print(f"複製檔案到反演目錄: {target_path}")
+                            except Exception as e:
+                                print(f"複製檔案失敗: {str(e)}")
+                    else:
+                        print(f"URF 檔案不存在: {urf_file_path}")
                 else:
                     print(f"轉換失敗: {csv_file}")
                     
